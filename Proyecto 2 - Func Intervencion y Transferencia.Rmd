@@ -1,0 +1,400 @@
+---
+title: "Práctica 2 Series Temporales - Colgate vs Crest"
+subtitle: "Alumno: Amadeo Gustavo Ancarani."
+date: "Máster en Data Science, CUNEF"
+output:
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+  html_document:
+    
+    highlight: kate
+    toc: yes
+    toc_depth: 2
+    code_folding: hide
+---
+
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(warning = FALSE, message = TRUE) 
+```
+
+# Introducción
+
+En el presente informe, se trata de presentar las predicciones del market share de dichas compañías para los 16 períodos solicitados. Para ello es necesario revisar las secciones de predicciones "Test", dado que hemos dividido a la serie temporal en "Train" (valores anteriores a los 16 periodos solicitados) y "Test" (las 16 predicciones solicitadas).
+
+En las secciones de predición, para cada empresa en particular se pueden evidenciar las estimaciones de las respectivas coutas de mercado y su propia descripción de lo sucedido. Se encuentran diferentes tipos de metodologías aplicadas, modelos ARIMA, Modelos de Intervención y un Modelo de Transferencia para el caso Colgate.
+
+Las diferencias radican en lo siguiente:
+
+* Modelo ARIMA: Solo se considera a la serie temporal de cada empresa por sepado para realizar las estimaciones, sin análisis de posibles desvíos por hechos como campañas publicitarias. Pero son necesarias de calcular ya que son un paso intermedio para lograr cuantificar los efectos de los llamados outliers (como la campaña aplicada).
+
+* Modelo de Intervención: Aquí partimos de la base del modelo anterior, logrando aplicar un análisis de los diferentes cambios repentinos que se pueden observar en una serie. En nuestro caso, logramos destacar un salto en el nivel de las cuotas de mercado para el período 136.
+
+Este efecto conocemos su causa y es la campaña aplicada por el equipo de Marketing, el cual logra que se eleve el nivel promedio de las cuotas de mercado de forma considerable. Este efecto nos ayuda a lograr una mejor estimación.
+
+* Modelo de Tranferencia: En este modelo se logra capturar el efecto de las empresas competidoras sobre el nivel de cuota de mercado de la variable observada. Esto lleva a una estimación que capta mejor la variabilidad semanal en las series.
+
+
+# Conclusión sobre la Campaña de Marketing
+
+Podemos cuantificar a la campaña de marketing en la sección de outliers de Crest, donde se destaca un cambio de nivel (Level Shift) en el periodo 136 de valor 0.16, es decir, que dado este salto, a partir del momento 136, la serie temporal continua su trayectoria anterior pero en un nivel 0.16 puntos más elevado. 
+
+Este logro, generó un cambio radical sobre el market share de la compañía abruptamente, pasando de una media de 15% a una media del 40% con una leve tendencia creciente. Se desplazó a Colgate como la empresa líder del sector, hecho sumamente destacable al realizar dicha campaña de Marketing.
+
+
+
+
+```{r, include=FALSE}
+# Libraries
+library(tidyverse)
+library(tsibble)
+library(feasts)
+library(TSA)
+library(Hmisc)
+library(astsa)
+library(dynlm)
+library(forecast)
+library(tsoutliers)
+library(xts)
+library(readxl)
+```
+
+# Read data
+
+Realizo una lectura de las series temporales de forma tal para separar a mi conjunto de entrenamiento con el conjunto de test (últimas 16 observaciones)
+```{r}
+data <- read_excel('data.xlsx')
+
+ts_colgate <- ts(data$Colgate, start=c(1958,1), frequency=52.18)
+ts_crest <- ts(data$Crest, start=c(1958,1), frequency=52.18)
+
+ts_colgate_train <- head(ts_colgate, length(ts_colgate)-16)
+ts_crest_train <- head(ts_crest, length(ts_crest)-16)
+
+ts_colgate_test <- tail(ts_colgate, 16)
+ts_crest_test <- tail(ts_crest, 16)
+
+ts_data_train <- cbind(ts_colgate_train, ts_crest_train)
+ts_data_test <- cbind(ts_colgate_test, ts_crest_test)
+
+```
+
+
+# Plot Data
+
+Procedemos a graficar las dos series temporales, tanto de manera separada como conjunta.
+```{r}
+autoplot(as_tsibble(ts_colgate_train))+
+  labs(title = "Market Share Colgate",
+       x="Weeks")
+
+autoplot(as_tsibble(ts_crest_train))+
+  labs(title = "Market Share Crest",
+       x="Weeks")
+
+autoplot(as_tsibble(ts_data_train))+
+  labs(title = "Market Share Colgate & Crest",
+       x="Weeks")
+```
+
+Durante todo el año 1958 y al comienzo de 1959, Colgate es la empresa que tiene mayor cuota de mercado, con cuotas de mercado cercanas al 50%, mientras que Crest tenía una participación del 15% aproximadamente. 
+El 1 de agosto de 1960, el Consejo de Terapéutica Dental de la American Dental Association (ADA) aprobó a Crest como una “ayuda importante en cualquier programa de higiene dental”, este suceso fue aprovechado por P&G para aumentar 
+significativamente su cuota de mercado (incluso superando al principal competidor de este mercado), al realizar una campaña de marketing con este anuncio. 
+Este evento tuvo un gran impacto, ya que en el último tramo del periodo, Crest ocupaba una cuota de mercado entre el 40% y 45% mientras que la participación de Colgate cayó incluso por debajo del 25%.
+
+
+# ARIMA MODEL Colgate
+```{r}
+modelo_col <- auto.arima(ts_colgate_train,lambda=0)
+summary(modelo_col)
+```
+
+
+# Residual analysis Colgate
+```{r}
+ggtsdisplay(modelo_col$residuals)
+```
+
+Podemos suponer que los residuos son ruido blanco
+
+
+# Box-Ljung Test Colgate
+```{r}
+Box.test(modelo_col$residuals,lag=52, fitdf=2, type="Lj")
+```
+
+Test de Box-Ljung
+
+P-value > 0.05 entonces los residuos no están autocorrelacionados.
+
+P-value < 0.05 entonces los residuos están autocorrelacionados.
+
+
+# Comparación entre valores reales Crest vs predichos con Modelo ARIMA
+```{r}
+fKO_col = forecast(modelo_col,16)
+autoplot(fKO_col)+ggtitle("ARIMA: Predicción Colgate")
+```
+
+# Outliers Colgate
+```{r}
+outliers_col <- tso(y = ts_colgate_train, types = c("AO", "LS", "TC"),discard.method = "bottom-up", tsmethod = "auto.arima", args.tsmethod = list(allowdrift = FALSE, ic = "bic"))
+outliers_col
+plot(outliers_col)
+```
+
+Bajo el análisis de outliers en series temporales, podemos identificar los siguientes tipos de outliers: AO (Additive Outlier), LS (Level Shift) y TC (Temporary Change). 
+
+El outlier de tipo LS para Colgate corresponde a la semana 136, el cual es causado como consecuencia de la campaña realizada por P&G.
+
+Esto nos permite realizar un modelo de intervención para conocer en mayor medida como es la descomposición del modelo ARIMA de esta serie temporal.
+
+# Modelo de Intervención Colgate
+```{r}
+int_data_col=ts_colgate_train
+dummies_col=data.frame(
+  LS1136=1*(seq(ts_colgate_train)>=136))
+
+mod_int_col=arimax(int_data_col,order=c(3,0,0),
+               seasonal=list(order=c(1,0,0),period=52),
+               xreg=dummies_col,
+               method='ML')
+mod_int_col
+mod_int_col$coef
+```
+
+# Comparación entre valores reales Colgate vs predichos con Modelo de Intervención Train
+```{r}
+plot(ts_colgate_train, ylab='Colgate train')
+points(fitted(mod_int_col), pch = 20)
+```
+
+
+```{r}
+dummies_col_test=data.frame(
+  LS1136=1*(seq(ts_colgate_test)>=1))
+dummies_col_test
+ff <- predict(mod_int_col, newxreg = dummies_col_test, n.ahead = 16)
+ff
+as.data.frame(ff)  
+```
+
+# Comparación entre valores reales Colgate vs predichos con Modelo de Intervención Test
+
+```{r}
+col_compare2 <- as.data.frame(ff)['pred'] 
+col_compare2 <- cbind(col_compare2, as.data.frame(ts_colgate_test))
+colnames(col_compare2) <- c('predicted', 'real')
+
+col_compare2 <- ts(col_compare2)
+autoplot(col_compare2) +
+  ggtitle("Comparación de predicciones Colgate vs Valor Real (1963)")+
+  labs(y = "Cuota de Mercado (%)", x = 'Semanas de 1963')
+```
+
+
+
+
+# ARIMA MODEL Crest
+
+Realizamos el mismo análisis visto desde la serie de Crest 
+```{r}
+modelo_cre <- auto.arima(ts_crest_train,lambda=0)
+summary(modelo_cre)
+```
+
+# Residual Analysis Crest
+```{r}
+ggtsdisplay(modelo_cre$residuals)
+```
+
+Podemos suponer que los residuos son ruido blanco
+
+
+# Box-Ljung Test Crest
+```{r}
+Box.test(modelo_cre$residuals,lag=52, fitdf=4, type="Lj")
+```
+
+Test de Box-Ljung
+
+P-value > 0.05 entonces los residuos no están autocorrelacionados.
+
+P-value < 0.05 entonces los residuos están autocorrelacionados.
+
+
+# Comparación entre valores reales Crest vs predichos con Modelo ARIMA 
+```{r}
+fKO_cre = forecast(modelo_cre, 16)
+
+autoplot(fKO_cre)+ggtitle("ARIMA: Predicción Crest")
+```
+
+# Outliers Crest
+```{r}
+outliers_cre <- tso(y = ts_crest_train, types = c("AO", "LS", "TC"),discard.method = "bottom-up", tsmethod = "auto.arima", args.tsmethod = list(allowdrift = FALSE, ic = "bic"))
+outliers_cre
+plot(outliers_cre)
+```
+
+Vemos el mismo efecto en el dato 136 de la serie, lo que nos permite realizar un nuevo modelo de intervención.
+
+# Modelo de Intervención Crest
+```{r}
+int_data_cre=ts_crest_train
+dummies_cre=data.frame(
+  LS1136=1*(seq(ts_crest_train)>=136))
+
+mod_int_cre=arimax(int_data_cre,order=c(0,1,1),
+                   seasonal=list(order=c(0,0,0),period=52),
+                   xreg=dummies_cre,
+                   method='ML')
+mod_int_cre
+mod_int_cre$coef
+```
+
+# Comparación entre valores reales Crest vs predichos con Modelo de Intervención Train
+```{r}
+plot(ts_crest_train, ylab='Crest train')
+points(fitted(mod_int_cre), pch = 20)
+```
+
+```{r}
+dummies_cre_test=data.frame(
+  LS1136=1*(seq(ts_crest_test)>=1))
+
+dummies_cre_test
+ff <- predict(mod_int_cre, newxreg = dummies_cre_test, n.ahead = 16)
+ff
+as.data.frame(ff)  
+```
+
+# Comparación entre valores reales Crest vs predichos con Modelo de Intervención Test
+
+```{r}
+col_compare2 <- as.data.frame(ff)['pred'] 
+col_compare2 <- cbind(col_compare2, as.data.frame(ts_crest_test))
+colnames(col_compare2) <- c('predicted', 'real')
+
+col_compare2 <- ts(col_compare2)
+autoplot(col_compare2) +
+  ggtitle("Comparación de predicciones Crest vs Valor Real (1963)")+
+  labs(y = "Cuota de Mercado (%)", x = 'Semanas de 1963')
+```
+
+
+# FUNCIÓN DE TRANSFERENCIA
+
+Aqui vamos a detectar la influencia de Crest sobre el market share de Colgate
+
+
+## Estimacion v(B) de Colgate. Retardo 15.
+```{r}
+mod0=dynlm(ts_colgate_train ~ L(ts_crest_train, 0:15) + L(ts_colgate_train, 1))
+mod0
+summary(mod0)
+```
+
+
+## ¿Son los residuos ruido blanco?
+```{r}
+forecast::tsdisplay(mod0$residuals)
+```
+
+Si, lo son.
+
+
+## Modelizacion con ARIMAX
+```{r}
+mod0 <- arimax(ts_colgate_train,
+                  order=c(1,0,0),
+                  include.mean=TRUE,
+                  xtransf=ts_crest_train,
+                  transfer=list(c(0,15)),
+                  method="ML")
+
+summary(mod0)
+forecast::tsdisplay(mod0$residuals)
+```
+
+
+## Plot V(B) Coefficients
+
+### Identificación Función de Transferencia
+```{r}
+mod0$coef
+plot(mod0$coef[3:18],type="h")
+```
+
+## Estimación Funcion de Transferencia
+
+### Fixed Parameters?
+```{r}
+mod_p <- arimax(ts_colgate_train,
+                order=c(1,0,0),
+                include.mean=FALSE,
+                #fixed=c(NA,NA,NA,NA,0,0,0,NA),
+                xtransf=ts_crest_train,
+                xreg = ts_crest_train,
+                transfer=list(c(2,0)),
+                method="ML")
+mod_p
+forecast::tsdisplay(mod_p$residuals)
+```
+```{r}
+mod_p <- arimax(ts_colgate_train,
+                order=c(1,0,1),
+                include.mean=FALSE,
+                #fixed=c(NA,NA,NA,NA,0,0,0,NA),
+                xtransf=ts_crest_train,
+                xreg = ts_crest_train,
+                transfer=list(c(2,0)),
+                method="ML")
+mod_p
+forecast::tsdisplay(mod_p$residuals)
+```
+
+## Modelo Fixed
+```{r}
+mod <- arimax(ts_colgate_train,
+              order=c(1,0,1),
+              include.mean=FALSE,
+              fixed=c(NA,NA,NA,0,0,0),
+              xtransf=ts_crest_train,
+              xreg = ts_crest_train,
+              transfer=list(c(2,0)),
+              method="ML")
+
+forecast::tsdisplay(mod$residuals)
+```
+
+# Comparación entre valores reales Colgate vs predichos con Modelo de Transferencia Train
+```{r}
+plot(ts_colgate_train, ylab='Colgate train')
+points(fitted(mod), pch = 20)
+```
+
+```{r}
+ff <- predict(mod, newxreg = ts_crest_test, n.ahead = 16)
+ff
+length(ts_crest_test)
+as.data.frame(ff)  
+```
+
+# Comparación entre valores reales Colgate vs predichos con Modelo de Transferencia Test
+
+```{r}
+col_compare2 <- as.data.frame(ff)['pred.Series.1'] 
+col_compare2 <- cbind(col_compare2, as.data.frame(ts_colgate_test))
+colnames(col_compare2) <- c('predicted', 'real')
+
+col_compare2 <- ts(col_compare2)
+autoplot(col_compare2) +
+  ggtitle("Comparación de predicciones Colgate vs Valor Real (1963)")+
+  labs(y = "Cuota de Mercado (%)", x = 'Semanas de 1963')
+```
+
+
+
+
+
